@@ -6,7 +6,7 @@
 ;; Homepage: https://github.com/ahyatt/triples
 ;; Package-Requires: ((seq "2.0") (emacs "25"))
 ;; Keywords: triples, kg, data, sqlite
-;; Version: 0.1.1
+;; Version: 0.1.2
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
 ;; published by the Free Software Foundation; either version 2 of the
@@ -126,7 +126,7 @@ with PROPERTIES. This is a low-level function that bypasses our
 normal schema checks, so should not be called from client programs."
   (unless (symbolp predicate)
     (error "Predicates in triples must always be symbols"))
-  (unless (plistp properties)
+  (when (and (fboundp 'plistp) (not (plistp properties)))
     (error "Properties stored must always be plists"))
   (pcase triples-sqlite-interface
     ('builtin 
