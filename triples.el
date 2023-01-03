@@ -6,7 +6,7 @@
 ;; Homepage: https://github.com/ahyatt/triples
 ;; Package-Requires: ((seq "2.0") (emacs "25"))
 ;; Keywords: triples, kg, data, sqlite
-;; Version: 0.1.2
+;; Version: 0.2
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
 ;; published by the Free Software Foundation; either version 2 of the
@@ -46,44 +46,80 @@ available. Builtin is available when the version is Emacs 29 or
 greater, and emacsql is usable when the `emacsql' package is
 installed.")
 
-(defun triples-connect (file)
-  "Connect to the database FILE and make sure it is populated."
+(defconst triples-sqlite-executable "sqlite3"
+  "If using emacs 29 builtin sqlite, this specifices the executable.
+It is invoked to make backups.")
+
+(defconst triples-default-database-filename (locate-user-emacs-file "triples.db")
+  "The default filename triples database. If no database is
+specified, this file is used.")
+
+(defun triples-connect (&optional file)
+  "Connect to the database FILE and make sure it is populated.
+If FILE is nil, use `triples-default-database-filename'."
   (unless (pcase-exhaustive triples-sqlite-interface
               ('builtin
                (and (fboundp 'sqlite-available-p) (sqlite-available-p)))
               ('emacsql (require 'emacsql nil t)))
     (error "The triples package requires either Emacs 29 or the emacsql package to be installed."))
-  (pcase triples-sqlite-interface
-    ('builtin (let* ((db (sqlite-open file)))
-                (sqlite-execute db "CREATE TABLE IF NOT EXISTS triples(subject TEXT NOT NULL, predicate TEXT NOT NULL, object NOT NULL, properties TEXT NOT NULL)")
-                (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_idx ON triples (subject)")
-                (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_predicate_idx ON triples (subject, predicate)")
-                (sqlite-execute db "CREATE INDEX IF NOT EXISTS predicate_object_idx ON triples (predicate, object)")
-                (sqlite-execute db "CREATE UNIQUE INDEX IF NOT EXISTS subject_predicate_object_properties_idx ON triples (subject, predicate, object, properties)")
-                db))
-    ('emacsql
-     (require 'emacsql)
-     (let* ((db (emacsql-sqlite file))
-            (triple-table-exists
-             (emacsql db [:select name
-                          :from sqlite_master
-                          :where (= type table) :and (= name 'triples)])))
-       (unless triple-table-exists
-         (emacsql db [:create-table triples ([(subject :not-null)
-                                              (predicate text :not-null)
-                                              (object :not-null)
-                                              (properties text :not-null)])])
-         (emacsql db [:create-index subject_idx :on triples [subject]])
-         (emacsql db [:create-index subject_predicate_idx :on triples [subject predicate]])
-         (emacsql db [:create-index predicate_object_idx :on triples [predicate object]])
-         (emacsql db [:create-unique-index subject_predicate_object_properties_idx :on triples [subject predicate object properties]]))
-       db))))
+  (let ((file (or file triples-default-database-filename)))
+    (pcase triples-sqlite-interface
+      ('builtin (let* ((db (sqlite-open file)))
+                  (sqlite-execute db "CREATE TABLE IF NOT EXISTS triples(subject TEXT NOT NULL, predicate TEXT NOT NULL, object NOT NULL, properties TEXT NOT NULL)")
+                  (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_idx ON triples (subject)")
+                  (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_predicate_idx ON triples (subject, predicate)")
+                  (sqlite-execute db "CREATE INDEX IF NOT EXISTS predicate_object_idx ON triples (predicate, object)")
+                  (sqlite-execute db "CREATE UNIQUE INDEX IF NOT EXISTS subject_predicate_object_properties_idx ON triples (subject, predicate, object, properties)")
+                  db))
+      ('emacsql
+       (require 'emacsql)
+       (let* ((db (emacsql-sqlite file))
+              (triple-table-exists
+               (emacsql db [:select name
+                                    :from sqlite_master
+                                    :where (= type table) :and (= name 'triples)])))
+         (unless triple-table-exists
+           (emacsql db [:create-table triples ([(subject :not-null)
+                                                (predicate text :not-null)
+                                                (object :not-null)
+                                                (properties text :not-null)])])
+           (emacsql db [:create-index subject_idx :on triples [subject]])
+           (emacsql db [:create-index subject_predicate_idx :on triples [subject predicate]])
+           (emacsql db [:create-index predicate_object_idx :on triples [predicate object]])
+           (emacsql db [:create-unique-index subject_predicate_object_properties_idx :on triples [subject predicate object properties]]))
+         db)))))
 
 (defun triples-close (db)
   "Close sqlite database DB."
   (pcase triples-sqlite-interface
     ('builtin (sqlite-close db))
     ('emacsql (emacsql-close db))))
+
+(defun triples-backup (db filename num-to-keep)
+  "Perform a backup of DB, located at path FILENAME.
+This uses the same backup location and names as configured in
+variables such as `backup-directory-alist'. Due to the fact that
+the database is never opened as a buffer, normal backups will not
+work, therefore this function must be called instead.
+
+Th DB argument is currently unused, but may be used in the future
+if emacs's native sqlite gains a backup feature.
+
+This also will clear excess backup files, according to
+NUM-TO-KEEP, which specifies how many backup files at max should
+exist at any time. Older backups are the ones that are deleted."
+  (call-process (pcase triples-sqlite-interface
+                  ('builtin triples-sqlite-executable)
+                  ('emacsql emacsql-sqlite-executable))
+                nil nil nil (expand-file-name filename)
+                (format ".backup '%s'" (expand-file-name
+                                        (car (find-backup-file-name
+                                              (expand-file-name filename))))))
+  (let ((backup-files (file-backup-file-names (expand-file-name filename))))
+    (cl-loop for backup-file in (cl-subseq
+                                 backup-files
+                                 (min num-to-keep (length backup-files)))
+             do (delete-file backup-file))))
 
 (defun triples--decolon (sym)
   "Remove colon from SYM."
@@ -263,6 +299,32 @@ object, properties to retrieve or nil for *."
                                  (when object `((= object ,(intern (format "$s%d" (cl-incf n))))))
                                  (when properties `((= properties ,(intern (format "$s%d" (cl-incf n)))))))))))
               (seq-filter #'identity (list subject predicate object properties)))))))
+
+(defun triples-move-subject (db old-subject new-subject)
+  "Replace all instance in DB of OLD-SUBJECT to NEW-SUBJECT.
+Any references to OLD-SUBJECT as an object are also replaced.
+This will throw an error if there is an existing subject
+NEW-SUBJECT with at least one equal property (such as type
+markers). But if there are no commonalities, the OLD-SUBJECT is
+merged into NEW-SUBJECT."
+  (pcase triples-sqlite-interface
+    ('builtin
+     (condition-case err
+         (progn
+           (sqlite-transaction db)
+           (sqlite-execute db "UPDATE triples SET subject = ? WHERE subject = ?"
+                           (list (triples-standardize-val new-subject) (triples-standardize-val old-subject)))
+           (sqlite-execute db "UPDATE triples SET object = ? WHERE object = ?"
+                           (list (triples-standardize-val new-subject) (triples-standardize-val old-subject)))
+           (sqlite-commit db))
+       (error (sqlite-rollback db)
+              (signal 'error err))))
+    ('emacsql
+     (emacsql-with-transaction db
+         (emacsql db [:update triples :set (= subject $s1) :where (= subject $s2)]
+                  new-subject old-subject)
+         (emacsql db [:update triples :set (= object $s1) :where (= object $s2)]
+                  new-subject old-subject)))))
 
 ;; Code after this point should not call sqlite or emacsql directly. If any more
 ;; calls are needed, put them in a defun, make it work for sqlite and emacsql,

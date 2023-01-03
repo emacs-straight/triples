@@ -54,7 +54,7 @@ easily debug into it.")
     (sql-sqlite (format "*schema test db SQL %s*" triples-test-db-file))))
 
 (defmacro triples-deftest (name _ &rest body)
-  "Create a test exercizing variants of `triples-sqlite-interface'."
+  "Create a test exercising variants of `triples-sqlite-interface'."
   (declare (debug t) (indent 2))
   (let ((builtin-name (intern (format "%s-builtin" name)))
         (emacsql-name (intern (format "%s-emacsql" name))))
@@ -67,6 +67,13 @@ easily debug into it.")
          (let ((triples-sqlite-interface 'emacsql))
            (skip-unless (featurep 'emacsql))
            ,@body)))))
+
+(triples-deftest triples-connect-default ()
+  (let* ((triples-default-database-filename (make-temp-file "triples-default"))
+         (db (triples-connect)))
+    (triples-db-insert db 1 'pred 2)
+    (triples-close db)
+    (should (file-exists-p triples-default-database-filename))))
 
 (triples-deftest triples-test-insert ()
   (triples-test-with-temp-db
@@ -337,6 +344,21 @@ easily debug into it.")
     (should (equal '((1))
                    (sqlite-select db "SELECT COUNT(*) FROM triples WHERE subject = ? AND predicate = 'base/type' AND object = 'marker'"
                                   (list (triples-standardize-val "foo")))))))
+
+(ert-deftest triples-move-subject ()
+  (triples-test-with-temp-db
+   (triples-add-schema db 'named '(name))
+   (triples-add-schema db 'friend '(id))
+   (triples-set-subject db 123 '(named :name "Ada Lovelace"))
+   (triples-set-subject db 456 '(named :name "Michael Faraday")
+                        '(friend :id 123))
+   (triples-set-subject db 987 '(named :name "To Be Deleted"))
+   (should-error (triples-move-subject db 123 987))
+   (triples-delete-subject db 987)
+   (triples-move-subject db 123 987)
+   (should-not (triples-get-subject db 123))
+   (should (equal "Ada Lovelace" (plist-get (triples-get-subject db 987) :named/name)))
+   (should (equal 987 (plist-get (triples-get-subject db 456) :friend/id)))))
 
 (ert-deftest triples-readme ()
   (triples-test-with-temp-db
