@@ -48,9 +48,11 @@ If no one has ever run that on this database, `nil' is returned."
   "Get the last time DB has been updated."
   (plist-get (triples-get-type db 'database 'backup) :last-update-time))
 
-(defun triples-backups-maybe-backup (db filename)
+(defun triples-backups-maybe-backup (db &optional filename)
   "If it is time for DB to be backed up, then back it up.
-FILENAME is also necessary for the backup operation."
+FILENAME is optional, as in `triples-connect', if not given will
+default to the standard triple database given in
+`triples-default-database-filename'."
   (let* ((backup-info (triples-backups-configuration db))
          (strategy-func (intern (format "triples-backups-strategy-%s"
                                         (plist-get backup-info :strategy)))))
@@ -62,7 +64,7 @@ FILENAME is also necessary for the backup operation."
        (format "Triples backup strategy %s not found, defaulting to `triples-backups-strategy-daily'" 
                strategy-func)
        :error))
-    (when (funcall (or (symbol-function strategy-func) triples-backups-strategy-daily)
+    (when (funcall (or (symbol-function strategy-func) #'triples-backups-strategy-daily)
                  (time-convert (plist-get backup-info :last-update-time) t))
       (triples-backup db filename (plist-get backup-info :num-to-keep))
       (apply #'triples-set-type db 'database 'backup (plist-put backup-info :last-update-time (time-convert (current-time) 'integer))))))
