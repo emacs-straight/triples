@@ -6,7 +6,7 @@
 ;; Homepage: https://github.com/ahyatt/triples
 ;; Package-Requires: ((seq "2.0") (emacs "28.1"))
 ;; Keywords: triples, kg, data, sqlite
-;; Version: 0.2.3
+;; Version: 0.2.5
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
 ;; published by the Free Software Foundation; either version 2 of the
@@ -118,12 +118,12 @@ exist at any time. Older backups are the ones that are deleted."
                   nil nil nil filename
                   (format ".backup '%s'" (expand-file-name
                                           (car (find-backup-file-name
-                                                filename))))))
-  (let ((backup-files (file-backup-file-names filename)))
-    (cl-loop for backup-file in (cl-subseq
-                                 backup-files
-                                 (min num-to-keep (length backup-files)))
-             do (delete-file backup-file))))
+                                                filename)))))
+    (let ((backup-files (file-backup-file-names filename)))
+      (cl-loop for backup-file in (cl-subseq
+                                   backup-files
+                                   (min num-to-keep (length backup-files)))
+               do (delete-file backup-file)))))
 
 (defun triples--decolon (sym)
   "Remove colon from SYM."
@@ -138,7 +138,9 @@ exist at any time. Older backups are the ones that are deleted."
 This is done to have compatibility with the way emacsql stores
 values. Turn a symbol into a string as well, but not a quoted
 one, because sqlite cannot handle symbols."
-  (let ((print-escape-control-characters t))
+  ;; Do not print control characters escaped - we want to get things out exactly
+  ;; as we put them in.
+  (let ((print-escape-control-characters nil))
     (if val
         (format "%S" val)
       ;; Just to save a bit of space, let's use "()" instead of "null", which is
@@ -150,13 +152,9 @@ one, because sqlite cannot handle symbols."
 This imitates the way emacsql returns items, with strings
 becoming either symbols, lists, or strings depending on whether
 the string itself is wrapped in quotes."
-  (if (and (stringp result)
-           (string-prefix-p "\"" result)
-           (string-suffix-p "\"" result))
-      (string-remove-suffix "\"" (string-remove-prefix "\"" result))
-    (if (numberp result)
+  (if (numberp result)
         result
-      (read result))))
+      (read result)))
 
 (defun triples-db-insert (db subject predicate object &optional properties)
   "Insert triple to DB: SUBJECT, PREDICATE, OBJECT with PROPERTIES.
@@ -169,7 +167,7 @@ normal schema checks, so should not be called from client programs."
   (when (and (fboundp 'plistp) (not (plistp properties)))
     (error "Properties stored must always be plists"))
   (pcase triples-sqlite-interface
-    ('builtin 
+    ('builtin
      (sqlite-execute db "REPLACE INTO triples VALUES (?, ?, ?, ?)"
                      (list (triples-standardize-val subject)
                            (triples-standardize-val (triples--decolon predicate))
@@ -224,7 +222,7 @@ all to nil, everything will be deleted, so be careful!"
               (apply #'vector
                      (append '(:delete :from triples)
                              (when (or subject predicate object properties)
-                               (triples--emacsql-andify 
+                               (triples--emacsql-andify
                                 (append
                                  '(:where)
                                  (when subject `((= subject ,(intern (format "$s%d" (cl-incf n))))))
@@ -295,7 +293,7 @@ object, properties to retrieve or nil for *."
                                ,(if selector (apply #'vector selector) '*)
                                :from triples)
                              (when (or subject predicate object properties)
-                               (triples--emacsql-andify 
+                               (triples--emacsql-andify
                                 (append
                                  '(:where)
                                  (when subject `((= subject ,(intern (format "$s%d" (cl-incf n))))))
@@ -552,7 +550,9 @@ TYPE-VALS-CONS is a list of conses, combining a type and a plist of values."
           type-vals-cons)))
 
 (defun triples-delete-subject (db subject)
-  "Delete all data in DB associated with SUBJECT."
+  "Delete all data in DB associated with SUBJECT.
+This usually should not be called, it's better to just delete
+data you own with `triples-remove-type'."
   (triples-db-delete db subject))
 
 (defun triples-search (db cpred text)

@@ -40,7 +40,7 @@ easily debug into it.")
   (declare (indent 0) (debug t))
   `(let ((db-file (make-temp-file "triples-test")))
      (unwind-protect
-         (progn 
+         (progn
            (let ((db (triples-connect db-file)))
              (setq triples-test-db-file db-file)
              ,@body
@@ -98,7 +98,7 @@ easily debug into it.")
     ;; Test that we can have symbol subject and objects.
     (triples-db-insert db 'sub 'pred 'obj)
     (should (equal
-             (mapcar (lambda (row) (seq-take row 3)) (triples-db-select db 'sub))               
+             (mapcar (lambda (row) (seq-take row 3)) (triples-db-select db 'sub))
              '((sub pred obj))))
     ;; Test that properties aren't strings. They happen to be stored
     ;; differently for each system due to differences in how the inserting
@@ -296,6 +296,26 @@ easily debug into it.")
    (should (equal '(:name ("Name"))
                   (triples-get-type db "foo" 'named)))))
 
+(ert-deftest triples-store-and-retrieve ()
+  (triples-test-with-temp-db
+    (triples-add-schema db 'text '(text :base/unique t))
+    (let ((text "Foo\nBar\tBaz \"Quoted\" "))
+      (triples-set-type db "foo" 'text :text text)
+      (let ((retrieved (triples-get-type db "foo" 'text)))
+        (should (equal `(:text ,text) retrieved))
+        (triples-set-type db "foo" 'text retrieved)
+        (should (equal `(:text ,text) (triples-get-type db "foo" 'text)))))))
+
+(ert-deftest triples-vector ()
+  (triples-test-with-temp-db
+   (triples-add-schema db 'named 'name)
+   (triples-add-schema db 'embedding '(embedding :base/unique t :base/type vector))
+   (triples-set-type db "foo" 'named :name '("Name"))
+   (triples-set-type db "foo" 'embedding :embedding [1 2 3 4 5])
+   (should (equal '(:embedding [1 2 3 4 5])
+                  (triples-get-type db "foo" 'embedding)))
+   (should-error (triples-set-type db "foo" 'embedding :embedding '(1 2 3)))))
+
 (ert-deftest triples-reversed ()
   (triples-test-with-temp-db
    (triples-add-schema db 'named
@@ -317,7 +337,7 @@ easily debug into it.")
    (triples-set-type db "foo" 'named :name "My Name Is Fred Foo")
    (triples-set-type db "bar" 'named :name "My Name Is Betty Bar")
    (should (equal
-            (triples-test-list-sort 
+            (triples-test-list-sort
              '(("bar" named/name "My Name Is Betty Bar" nil)
                ("foo" named/name "My Name Is Fred Foo" nil)))
             (triples-test-list-sort
