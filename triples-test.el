@@ -190,6 +190,45 @@ easily debug into it.")
     ;; this will fail.
     (should (= 0 (length (triples-db-select-pred-op db :person/age '> 1000))))))
 
+(ert-deftest triples-test-builtin-emacsql-compat ()
+  (cl-loop for subject in '(1 a "a") do
+           (let ((triples-sqlite-interface 'builtin))
+             (triples-test-with-temp-db
+               (triples-add-schema db 'person
+                                     '(name :base/unique t :base/type string)
+                                     '(age :base/unique t :base/type integer))
+                 (triples-set-type db subject 'person :name "Alice Aardvark" :age 41)
+                 (should (equal (triples-get-type db subject 'person)
+                                '(:age 41 :name "Alice Aardvark")))
+                 (triples-close db)
+                 (let* ((triples-sqlite-interface 'emacsql)
+                        (db (triples-connect db-file)))
+                   (should (equal (triples-get-type db subject 'person)
+                                  '(:age 41 :name "Alice Aardvark")))
+                   (triples-close db))
+                 ;; Just so the last close will work.
+                 (setq db (triples-connect db-file))))))
+
+(ert-deftest triples-test-emacsql-builtin-compat ()
+  (cl-loop for subject in '(1 a "a") do
+           (let ((triples-sqlite-interface 'emacsql))
+             (triples-test-with-temp-db
+               (triples-add-schema db 'person
+                                     '(name :base/unique t :base/type string)
+                                     '(age :base/unique t :base/type integer))
+                 (triples-set-type db subject 'person :name "Alice Aardvark" :age 41)
+                 (should (equal (triples-get-type db subject 'person)
+                                '(:age 41 :name "Alice Aardvark")))
+                 (triples-close db)
+                 (let* ((triples-sqlite-interface 'builtin)
+                        (db (triples-connect db-file)))
+                   (should (equal (triples-get-type db subject 'person)
+                                  '(:age 41 :name "Alice Aardvark")))
+                   (triples-close db))
+                 ;; Just so the last close will work.
+                 (setq db (triples-connect db-file))))))
+    
+
 ;; After this we don't bother testing both with emacsql and the builtin sqlite,
 ;; since if the functions tested above work, it should also work for both.
 
@@ -205,7 +244,7 @@ easily debug into it.")
             '(locale :base/unique t)
             'alternate-names
             '(nicknames :base/unique nil))
-           '(replace-subject
+           '(replace-subject-type
              .
              ((named base/type schema)
               (named schema/property name)
@@ -425,33 +464,41 @@ easily debug into it.")
     (triples-set-subject db 123 '(named :name ("Foo" "Foo")))
     (should (= 1 (length (triples-subjects-with-predicate-object db 'named/name "Foo"))))))
 
+(ert-deftest triples-test-schema-and-data-with-same-subject ()
+  (triples-test-with-temp-db
+   (triples-add-schema db 'foo '(bar))
+   (triples-set-subject db 'foo '(foo :bar "baz"))
+   (should (equal "baz" (plist-get (triples-get-subject db 'foo) :foo/bar)))
+   (triples-add-schema db 'foo '(bar))
+   (should (equal "baz" (plist-get (triples-get-subject db 'foo) :foo/bar)))))
+
 (ert-deftest triples-readme ()
   (triples-test-with-temp-db
-   (triples-add-schema db 'person
+    (triples-add-schema db 'person
        '(name :base/unique t :base/type string)
        '(age :base/unique t :base/type integer))
-   (triples-add-schema db 'employee
-       '(id :base/unique t :base/type integer)
-       '(manager :base/unique t)
-       '(reportees :base/virtual-reversed employee/manager))
-   ;; Set up catherine and dennis
-  (triples-set-type db "catherine" 'employee :manager "alice")
-  (triples-set-type db "dennis" 'employee :manager "alice")
-  (triples-delete-subject db "alice")
-  (triples-set-type db "alice" 'person :name "Alice Aardvark" :age 41)
-  (triples-set-type db "alice" 'employee :id 1901 :manager "bob")
-  (should (equal (triples-test-plist-sort (triples-get-subject db "alice"))
-                 (triples-test-plist-sort '(:person/name "Alice Aardvark" :person/age 41
-                                                         :employee/id 1901
-                                                         :employee/manager "bob"
-                                                         :employee/reportees ("catherine" "dennis")))))
-  (triples-set-subject db "alice" '(person :name "Alice Aardvark" :age 41)
-                       '(employee :id 1901 :manager "bob"))
-  (should (equal (triples-test-plist-sort (triples-get-subject db "alice"))
-                 (triples-test-plist-sort '(:person/name "Alice Aardvark" :person/age 41
-                                                         :employee/id 1901
-                                                         :employee/manager "bob"
-                                                         :employee/reportees ("catherine" "dennis")))))))
+    (triples-add-schema db 'employee
+                        '(id :base/unique t :base/type integer)
+                        '(manager :base/unique t)
+                        '(reportees :base/virtual-reversed employee/manager))
+    ;; Set up catherine and dennis
+    (triples-set-type db "catherine" 'employee :manager "alice")
+    (triples-set-type db "dennis" 'employee :manager "alice")
+    (triples-delete-subject db "alice")
+    (triples-set-type db "alice" 'person :name "Alice Aardvark" :age 41)
+    (triples-set-type db "alice" 'employee :id 1901 :manager "bob")
+    (should (equal (triples-test-plist-sort (triples-get-subject db "alice"))
+                   (triples-test-plist-sort '(:person/name "Alice Aardvark" :person/age 41
+                                                           :employee/id 1901
+                                                           :employee/manager "bob"
+                                                           :employee/reportees ("catherine" "dennis")))))
+    (triples-set-subject db "alice" '(person :name "Alice Aardvark" :age 41)
+                         '(employee :id 1901 :manager "bob"))
+    (should (equal (triples-test-plist-sort (triples-get-subject db "alice"))
+                   (triples-test-plist-sort '(:person/name "Alice Aardvark" :person/age 41
+                                                           :employee/id 1901
+                                                           :employee/manager "bob"
+                                                           :employee/reportees ("catherine" "dennis")))))))
 
 
 (provide 'triples-test)

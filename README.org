@@ -5,7 +5,7 @@ The =triples= module is a standard database module designed for use in other ema
 * Installing
 This module is available through GNU ELPA, and can be installed as normal.  However, most of the time this module is only useful in concert with another module which uses it as a library and will declare it as a dependency, so unless you are planning on developing with it, there is usually no need to install it directly.
 * Maturity
-This module is very new should be considered alpha quality.
+This module is somewhat new and should be considered beta quality.
 
 While it has basic functionality, there are significant parts, such as a querying language, that are missing.  Whether anyone needs such parts will determine the priority in which they get built.
 * Using the =triples= library
@@ -83,7 +83,7 @@ There are other useful functions, including:
 - =triples-get-types=, which gets all the types a subject has,
 - =triples-delete-subject=, which deletes all data associated with a subject,
 - =triples-with-predicate=, gets all triples that is about a specific property,
-- =triples-with-predicate-object=, get all subjects whose predicate is equal to /object/,
+- =triples-subject-with-predicate-object=, get all subjects whose predicate is equal to /object/,
 - =triples-subjects-of-type=, get all subjects which have a particular type.
 ** Predicates, with type and without
 Sometimes the triples library will require predicates that are without type, and sometimes with type, or "combined predicates".  The rule is that if the type is already specified in the function, it does not need to be respecified.  If the type is not specified, it is included in the combined predicate.

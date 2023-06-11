@@ -1,12 +1,12 @@
 ;;; triples.el --- A flexible triple-based database for use in apps  -*- lexical-binding: t; -*-
 
-;; Copyright (c) 2022  Free Software Foundation, Inc.
+;; Copyright (c) 2022, 2023  Free Software Foundation, Inc.
 
 ;; Author: Andrew Hyatt <ahyatt@gmail.com>
 ;; Homepage: https://github.com/ahyatt/triples
 ;; Package-Requires: ((seq "2.0") (emacs "28.1"))
 ;; Keywords: triples, kg, data, sqlite
-;; Version: 0.2.7
+;; Version: 0.3
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
 ;; published by the Free Software Foundation; either version 2 of the
@@ -65,11 +65,7 @@ If FILE is nil, use `triples-default-database-filename'."
   (let ((file (or file triples-default-database-filename)))
     (pcase triples-sqlite-interface
       ('builtin (let* ((db (sqlite-open file)))
-                  (sqlite-execute db "CREATE TABLE IF NOT EXISTS triples(subject TEXT NOT NULL, predicate TEXT NOT NULL, object NOT NULL, properties TEXT NOT NULL)")
-                  (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_idx ON triples (subject)")
-                  (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_predicate_idx ON triples (subject, predicate)")
-                  (sqlite-execute db "CREATE INDEX IF NOT EXISTS predicate_object_idx ON triples (predicate, object)")
-                  (sqlite-execute db "CREATE UNIQUE INDEX IF NOT EXISTS subject_predicate_object_properties_idx ON triples (subject, predicate, object, properties)")
+                  (triples-setup-table-for-builtin db)
                   db))
       ('emacsql
        (require 'emacsql)
@@ -88,6 +84,16 @@ If FILE is nil, use `triples-default-database-filename'."
            (emacsql db [:create-index predicate_object_idx :on triples [predicate object]])
            (emacsql db [:create-unique-index subject_predicate_object_properties_idx :on triples [subject predicate object properties]]))
          db)))))
+
+(defun triples-setup-table-for-builtin (db)
+  "Set up the triples table in DB.
+This is a separate function due to the need to use it during
+upgrades to version 0.3"
+  (sqlite-execute db "CREATE TABLE IF NOT EXISTS triples(subject NOT NULL, predicate TEXT NOT NULL, object NOT NULL, properties TEXT NOT NULL)")
+  (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_idx ON triples (subject)")
+  (sqlite-execute db "CREATE INDEX IF NOT EXISTS subject_predicate_idx ON triples (subject, predicate)")
+  (sqlite-execute db "CREATE INDEX IF NOT EXISTS predicate_object_idx ON triples (predicate, object)")
+  (sqlite-execute db "CREATE UNIQUE INDEX IF NOT EXISTS subject_predicate_object_properties_idx ON triples (subject, predicate, object, properties)"))
 
 (defun triples-close (db)
   "Close sqlite database DB."
@@ -137,15 +143,17 @@ exist at any time. Older backups are the ones that are deleted."
   "If VAL is a string, return it as enclosed in quotes
 This is done to have compatibility with the way emacsql stores
 values. Turn a symbol into a string as well, but not a quoted
-one, because sqlite cannot handle symbols."
+one, because sqlite cannot handle symbols. Integers do not need
+to be stringified."
   ;; Do not print control characters escaped - we want to get things out exactly
   ;; as we put them in.
   (let ((print-escape-control-characters nil))
-    (if val
-        (format "%S" val)
+    (pcase val
       ;; Just to save a bit of space, let's use "()" instead of "null", which is
       ;; what it would be turned into by the pcase above.
-      "()")))
+      ((pred null) "()")
+      ((pred integerp) val)
+      (_ (format "%S" val)))))
 
 (defun triples-standardize-result (result)
   "Return RESULT in standardized form.
@@ -439,7 +447,7 @@ definitions."
 PROPS is a list of either property symbols, or lists of
 properties of the type and the meta-properties associated with
 them."
-  (cons 'replace-subject
+  (cons 'replace-subject-type
         (cons `(,type base/type schema)
               (cl-loop for p in props
                        nconc
